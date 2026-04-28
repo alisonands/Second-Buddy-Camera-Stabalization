@@ -99,9 +99,9 @@ void loop()
       float yaw = myIMU.getYaw() * 180.0 / PI;
 
       // Get gyro rates (rad/s)
-      float gx_yaw = myIMU.getGyroX();
-      float gy_roll = myIMU.getGyroY();
-      float gz_pitch = myIMU.getGyroZ();
+      float gx_roll = myIMU.getGyroX();
+      float gy_pitch = myIMU.getGyroY();
+      float gz_yaw = myIMU.getGyroZ();
 
       // ------------------------------------
       // ----JOYSTICK INPUT VALUES HERE------
