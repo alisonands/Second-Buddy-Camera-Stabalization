@@ -1,6 +1,6 @@
 // notes
-// same as file in src/main.cpp. this is a test file.
 // gyro is sideways -> +x points down, +y points forward, +z points outward
+// update: I dont think we have to change anything 👀
 // so yaw is x, pitch is z
 
 #include <Wire.h>
@@ -29,11 +29,12 @@ float roll, pitch, yaw;
 
 // desired values (to be replaced w joystick inputs in loop later)
 float desired_yaw = 0.0;
-float desired_pitch = 0.0;
+// float desired_pitch = 0.0;
 
 // PID VALUES
 float Kp_pitch = 2.0, Ki_pitch = 0.0, Kd_pitch = 0.1; // position control for pitch
 float Kp_yaw = 2.0, Ki_yaw = 0.0, Kd_yaw = 0.1;       // rate control for yaw
+float Kp_yaw_angle = 2.0, Ki_yaw_angle = 0.0, Kd_yaw_angle = 0.1;   // outer loop position control for yaw
 float dt = 0.05; // 50ms delay
 int desiredOmegaX = 20;
 int desiredOmegaY = 20;
@@ -44,7 +45,7 @@ float prev_int_roll, prev_int_pitch, prev_int_yaw;
 void setup()
 { 
   Serial.begin(115200);
-  delay(200);
+  delay(1000);
 
   // Start I2C
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -75,7 +76,7 @@ void setup()
   myIMU.enableGyro(50);           // 50ms = 20Hz
 
   Serial.println("BNO080 Euler Angles (deg)");
-  Serial.println("Roll,Pitch,Yaw");
+  Serial.println("End setup");
 }
 
 void calibrate()
@@ -108,17 +109,17 @@ void loop()
     // check for packet
 
     // Get gyro rates (rad/s)
-    float gx = myIMU.getGyroX(); // 
-    float gy = myIMU.getGyroY(); //
-    float gz = myIMU.getGyroZ(); //
+    float gx_yaw = myIMU.getGyroX(); // 
+    float gy_roll = myIMU.getGyroY(); //
+    float gz_pitch = myIMU.getGyroZ(); //
 
     // read values from joystick (desired values)
-    // float joystick_x, joystick_y;
-    // joystick_read(joystick_x, joystick_y);
+    float joystick_x, joystick_y;
+    joystick_read(joystick_x, joystick_y);
     
     // --- PITCH POSITION CONTROL (Positional Servo) ---
     // Map joystick_y [0, 180] to desired pitch [0, 90] degrees
-    // float desired_pitch = joystick_y / 2.0;
+    float desired_pitch = joystick_y / 2.0;
     
     // error pitch
     float error_pitch = desired_pitch - pitch;
@@ -134,17 +135,21 @@ void loop()
     // --- YAW RATE CONTROL (Continuous Servo) ---
     // Map joystick_x [0, 180] to desired yaw rate [-max_rate, +max_rate] in rad/s
     float max_yaw_rate = 3.0; // Adjust this to limit max rotation speed
-    float desired_yaw_rate = ((desired_pitch - 90.0) / 90.0) * max_yaw_rate;
+    // float desired_yaw_rate = ((desired_pitch - 90.0) / 90.0) * max_yaw_rate;
     
+    // yaw angle
+    float error_yaw = desired_yaw - desired_yaw;
+    float desired_yaw_rate = Kp_yaw_angle * error_yaw;  // connect to rate of rotation
+    desired_yaw_rate = constrain(desired_yaw_rate, -3.0, 3.0);
+
     // Error yaw
-    float error_yaw_rate = desired_yaw_rate - gz;
+    float error_yaw_rate = desired_yaw_rate - gx_yaw;
 
     pid_pos_eqn(error_yaw_rate, Kp_yaw, Ki_yaw, Kd_yaw, prev_err_yaw, prev_int_yaw, dt);
     float output_yaw = PIDReturn[0];
     prev_err_yaw = PIDReturn[1];
     prev_int_yaw = PIDReturn[2];
 
-    // constrained to 90 (for now. because wires. will remove later)
     int yaw_servo_cmd = constrain(90 + (int)output_yaw, 0, 180);
 
     // Set servos
@@ -152,21 +157,21 @@ void loop()
     servoYaw.write(yaw_servo_cmd); // yaw PID output
 
     // debug
-    Serial.print(roll+90, 0);
-    Serial.print(",");
-    Serial.print(pitch+90, 0);
-    Serial.print(",");
-    Serial.print(yaw, 0);
-    Serial.print(",");
-    Serial.print(desired_yaw, 2);
-    Serial.print(",");
+    // Serial.print(roll+90, 0);
+    // Serial.print(",");
+    // Serial.print(pitch+90, 0);
+    // Serial.print(",");
+    // Serial.print(yaw, 0);
+    // Serial.print(",");
+    // Serial.print(desired_yaw, 2);
+    // Serial.print(",");
     Serial.print(desired_pitch, 2);
-    Serial.print(",");
-    Serial.print(gx, 4);
-    Serial.print(",");
-    Serial.print(gy, 4);
-    Serial.print(",");
-    Serial.println(gz, 4);
+    // Serial.print(",");
+    // Serial.print(gx_yaw, 4);
+    // Serial.print(",");
+    // Serial.print(gy_roll, 4);
+    // Serial.print(",");
+    // Serial.println(gz_pitch, 4);
   }
 
   delay(50);
