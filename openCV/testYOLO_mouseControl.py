@@ -3,11 +3,11 @@ import cv2
 import requests
 
 # Load pretrained YOLO model (COCO dataset)
-model = YOLO("yolov8n.pt")
+model = YOLO("yolo26n.pt")
 # model.to("cuda") # enable GPU usage, oh wait im using AMD
 
 # ESP32-CAM stream
-esp_ip = "192.168.1.41"
+esp_ip = "10.91.34.154"
 url = f"http://{esp_ip}:81/stream"
 
 # Configure stream
