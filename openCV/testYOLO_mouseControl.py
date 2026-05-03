@@ -1,17 +1,25 @@
 from ultralytics import YOLO
 import cv2
 import requests
+import serial
+import time
+
+# connect via serial
+ser = serial.Serial("COM6", 115200, timeout=0)
+last_read = 0
 
 # Load pretrained YOLO model (COCO dataset)
-model = YOLO("yolov8n.pt")
+# model = YOLO("yolov8n.pt")
+model = YOLO("yolo26n.pt")
 # model.to("cuda") # enable GPU usage, oh wait im using AMD
 
 # ESP32-CAM stream
-esp_ip = "192.168.1.41"
+esp_ip = "192.168.1.57" # testing camera
+# esp_ip = "192.168.1.41" # primary camera
 url = f"http://{esp_ip}:81/stream"
 
 # Configure stream
-requests.get(f"http://{esp_ip}/control?var=framesize&val=10") # resolution; val 10 = 640x480, 6 = 320x240
+requests.get(f"http://{esp_ip}/control?var=framesize&val=7") # resolution; val 10 = 640x480, 7 = 320x240
 requests.get(f"http://{esp_ip}/control?var=quality&val=12")   # quality; 4-63 (lower is better, better is lower fps)
 requests.get(f"http://{esp_ip}/control?var=brightness&val=0") # brightness; -3 to 3
 requests.get(f"http://{esp_ip}/control?var=contrast&val=0")   # contrast; -3 to 3
@@ -24,13 +32,7 @@ if not cap.isOpened():
     print("Failed to open stream")
     exit()
 
-# -----------------------------
-# STATE
-# -----------------------------
-click_x, click_y = -1, -1
-selected_box = None
-tracking_box = None
-lock_active = False
+
 
 # -----------------------------
 # IoU FUNCTION
@@ -54,6 +56,11 @@ def iou(boxA, boxB):
 # -----------------------------
 # MOUSE CALLBACK
 # -----------------------------
+click_x, click_y = -1, -1
+selected_box = None
+tracking_box = None
+lock_active = False
+
 def mouse(event, x, y, flags, param):
     global click_x, click_y, lock_active
 
@@ -78,6 +85,9 @@ while True:
     if not ret:
         print("Frame grab failed")
         break
+
+    # rotate stream
+    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
     # Run YOLO inference
     # frame_small = cv2.resize(frame, (320, 240)) # resize before passing into model
@@ -140,7 +150,33 @@ while True:
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
         cv2.circle(annotated, (cx, cy), 6, (0, 0, 255), -1)
+        
+        # compute normalized error command signal
+        h, w = frame.shape[:2]
 
+        fx = w / 2  # frame width
+        fy = h / 2  # frame height
+
+        ex_px = cx - fx  # width error
+        ey_px = cy - fy  # height error
+
+        ex = ex_px / fx  # normalized width error
+        ey = ey_px / fy  # normalized height error
+
+        # clamping
+        ex = max(-1.0, min(1.0, ex))
+        ey = max(-1.0, min(1.0, ey))
+
+        # add deadzone
+        if abs(ex) < 0.05: ex = 0
+        if abs(ey) < 0.05: ey = 0
+    else:
+        ex = 0
+        ey = 0
+
+    ser.write(f"{ex:.3f},{ey:.3f}\n".encode()) # send error to COM-connected ESP
+
+    # play stream
     cv2.imshow("Stream", annotated)
 
     if cv2.waitKey(1) == 27:
