@@ -2,11 +2,9 @@ from ultralytics import YOLO
 import cv2
 import requests
 import serial
-import time
 
 # connect via serial
 ser = serial.Serial("COM6", 115200, timeout=0)
-last_read = 0
 
 # Load pretrained YOLO model (COCO dataset)
 model = YOLO("yolo26n.pt")
@@ -173,8 +171,11 @@ while True:
         ex = 0
         ey = 0
 
-    ser.write(f"{ex:.3f},{ey:.3f}\n".encode()) # send error to COM-connected ESP
+    ex_int = int(round(ex * 1000))
+    ey_int = int(round(ey * 1000))
 
+    ser.write(f"{ex_int},{ey_int}\n".encode()) # send error to COM-connected ESP
+    
     # play stream
     cv2.imshow("Stream", annotated)
 
