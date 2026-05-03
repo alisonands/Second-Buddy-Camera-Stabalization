@@ -1,7 +1,6 @@
 #include <Wire.h>
 #include "SparkFun_BNO080_Arduino_Library.h"
 #include <ESP32Servo.h>
-#include "pid_pos.h"
 
 // ------ DEFINE I2C PINS -------
 #define SDA_PIN 21
@@ -9,33 +8,165 @@
 #define BNO_ADDR 0x4B
 
 // --------- BNO080 GYRO ----------
-BNO080 myIMU;
+BNO080 IMU;
 
 // Servo
 Servo servoPitch;
 Servo servoYaw;
-int servoPitchPin = 19; 
+int servoPitchPin = 19;
 int servoYawPin = 18;
 
-// desired values (to be replaced w joystick inputs in loop later)
-float desired_yaw = 0.0;
-float desired_pitch = 0.0;
+constexpr uint16_t IMU_REPORT_INTERVAL_MS = 20; // 50 Hz
+constexpr float RAD_TO_DEG_F = 57.2957795f;
+constexpr float DT_FALLBACK = 0.02f;
+constexpr float DT_MIN = 0.001f;
+constexpr float DT_MAX = 0.1f;
+constexpr float PITCH_DEADBAND = 0.20f;
+constexpr float YAW_DEADBAND_RAW = 0.02f;
+constexpr float PITCH_OUTPUT_SLEW_DPS = 90.0f;
+constexpr float YAW_OUTPUT_SLEW_DPS = 220.0f;
+constexpr float PITCH_OUTPUT_LIMIT = 46.0f;
+constexpr float YAW_OUTPUT_LIMIT = 8.0f;
+constexpr float PITCH_ERROR_FILTER_ALPHA = 0.12f;
+constexpr float PITCH_HOLD_BAND_DEG = 1.0f; // for ~deg stabalization
+constexpr float PITCH_HOLD_RATE_DPS = 8.0f; // dont do anything if pitch rate is under 8 deg/s
+constexpr float PITCH_HOLD_OUTPUT_BAND_DEG = 0.49f; // if requested servo move is under 0.49
+// Set PITCH_USE_Y_AXIS to true if the serial x/y/z print shows pitch motion on y.
+constexpr bool PITCH_USE_Y_AXIS = true;
+constexpr float PITCH_ERROR_SIGN = 1.0f;
+constexpr float PITCH_RATE_SIGN = -1.0f;
+constexpr float PITCH_OUTPUT_SIGN = 1.0f;
+constexpr float YAW_ERROR_SIGN = 1.0f;
+constexpr float YAW_RATE_SIGN = 1.0f;
 
-// PID VALUES
-float Kp_pitch = 1.0, Ki_pitch = 0.0, Kd_pitch = 0.001;             // position control for pitch
-float Kp_yaw = 1.0, Ki_yaw = 0.0, Kd_yaw = 0.1;                   // rate control for yaw
-float Kp_yaw_angle = 1.0, Ki_yaw_angle = 0.0, Kd_yaw_angle = 0.0; // outer loop position control for yaw
-// float dt = 0.05;                                                  // 50ms delay
-// int desiredOmegaX = 20;
-// int desiredOmegaY = 20;
-float prev_err_roll, prev_err_pitch, prev_err_yaw;
-float prev_int_roll, prev_int_pitch, prev_int_yaw;
+float pitch_center = 100.0;
+float yaw_center = 94.0;
 
-// other
-unsigned long lastLoopTime = 0;
-const unsigned long loopInterval = 50; // ms = 20 Hz
-float dt = 0.05;
+float pitch_range_down = 90;
+float pitch_range_up = 45;
 
+uint32_t last_sample_us = 0;
+float pitch_output_state = 90.0f;
+float yaw_output_state = 94.0f;
+float filtered_pitch_error = 0.0f;
+
+// Data structures
+typedef struct
+{
+  float w, x, y, z;
+} Quaternion;
+
+typedef struct
+{
+  float kp, ki, kd;
+  float integ;
+  float integLimit;
+} PID;
+
+// axis alignment
+// float pitch_error = err_x;
+// float yaw_error   = err_z;
+
+// Quaternions
+void normalizeQuat(Quaternion *q)
+{
+  float norm = sqrt(q->w * q->w + q->x * q->x + q->y * q->y + q->z * q->z);
+  q->w /= norm;
+  q->x /= norm;
+  q->y /= norm;
+  q->z /= norm;
+}
+
+// inverse
+Quaternion quatInverse(Quaternion q)
+{
+  Quaternion inv = {q.w, -q.x, -q.y, -q.z};
+  return inv;
+}
+
+// multiply
+Quaternion quatMultiply(Quaternion a, Quaternion b)
+{
+  Quaternion q;
+
+  q.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+  q.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+  q.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+  q.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+
+  return q;
+}
+
+// motors
+void setPitchMotor(float cmd)
+{
+  // position motor
+  // e.g. map to servo or position controller
+}
+
+void setYawMotor(float cmd)
+{
+  // continuous motor
+  // e.g. PWM or velocity control
+}
+
+// PID
+float runPID(PID *pid, float error, float gyroRate, float dt)
+{
+
+  float p = pid->kp * error;
+
+  // Integral
+  pid->integ += pid->ki * error * dt;
+  pid->integ = constrain(pid->integ, -pid->integLimit, pid->integLimit);
+
+  // Derivative (gyro damping)
+  float d = -pid->kd * gyroRate;
+
+  return p + pid->integ + d;
+}
+
+// global variables
+Quaternion q_current;
+Quaternion q_target;
+
+PID pid_pitch = {.kp = 1.60, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
+PID pid_yaw = {.kp = 35.0, .ki = 0.0, .kd = 0.001, .integ = 0, .integLimit = 10};
+
+float gyro_x, gyro_y, gyro_z;
+
+float computeSampleDt()
+{
+  uint32_t now = micros();
+  if (last_sample_us == 0)
+  {
+    last_sample_us = now;
+    return DT_FALLBACK;
+  }
+
+  float dt = (now - last_sample_us) * 1e-6f;
+  last_sample_us = now;
+
+  if (dt < DT_MIN || dt > DT_MAX)
+  {
+    return DT_FALLBACK;
+  }
+
+  return dt;
+}
+
+float lowPass(float state, float input, float alpha)
+{
+  return state + alpha * (input - state);
+}
+
+float slewLimit(float current, float target, float max_rate_deg_per_sec, float dt)
+{
+  float max_step = max_rate_deg_per_sec * dt;
+  return current + constrain(target - current, -max_step, max_step);
+}
+
+// setup
 void setup()
 {
   Serial.begin(115200);
@@ -51,138 +182,137 @@ void setup()
   servoPitch.attach(servoPitchPin, 500, 2400);
   servoYaw.attach(servoYawPin, 500, 2400);
 
-  // init PID
-  reset_pid();
+  servoPitch.write(110);
 
-  // Start BNO080
-  if (!myIMU.begin(BNO_ADDR, Wire))
+  if (!IMU.begin(BNO_ADDR, Wire))
   {
     Serial.println("BNO080 not found 😭 BAD BAD BAD");
-    while (1);
-    // delay(10);
+    while (1)
+      ;
   }
 
   Serial.println("Connected, initializing...");
 
   delay(500);
-  myIMU.enableRotationVector(50);
+
+  IMU.enableRotationVector(IMU_REPORT_INTERVAL_MS);
   delay(200);
-  myIMU.enableGyro(50); // 50ms = 20Hz
-  Serial.println("IMU ready. End of setup.");
+  IMU.enableGyro(IMU_REPORT_INTERVAL_MS);
+
+  Serial.println("IMU ready");
+
+  // wait for a few good samples
+  for (int i = 0; i < 10; i++)
+  {
+    while (!IMU.dataAvailable())
+      ;
+
+    q_current.w = IMU.getQuatReal();
+    q_current.x = IMU.getQuatI();
+    q_current.y = IMU.getQuatJ();
+    q_current.z = IMU.getQuatK();
+  }
+
+  normalizeQuat(&q_current);
+  q_target = q_current;
+  last_sample_us = micros();
+  pitch_output_state = pitch_center;
+  yaw_output_state = yaw_center;
+  servoPitch.write(pitch_output_state);
+  servoYaw.write(yaw_output_state);
 }
 
 void loop()
 {
-  // unsigned long now = millis();
-
-  // if (now - lastLoopTime < loopInterval) {
-  //   return; // wait until 50ms has passed
-  // }
-
-  // lastLoopTime = now;
-
-    if (myIMU.hasReset())
-    {
-      Serial.println("IMU reset!");
-      delay(100);
-      myIMU.enableRotationVector(50);
-      myIMU.enableGyro(50); // 50ms = 20Hz
-    }
-
-    if (myIMU.dataAvailable())
-    {
-      // ------------------------------------
-      // ------GET VALUES FROM SENSOR--------
-      // ------------------------------------
-      float roll = myIMU.getRoll() * 180.0 / PI;
-      float pitch = myIMU.getPitch() * 180.0 / PI;
-      float yaw = myIMU.getYaw() * 180.0 / PI;
-
-      // Get gyro rates (rad/s)
-      float gx_roll = myIMU.getGyroX();
-      float gy_pitch = myIMU.getGyroY();
-      float gz_yaw = myIMU.getGyroZ();
-
-      // Quaternions
-      float qx = myIMU.getQuatI();
-      float qy = myIMU.getQuatJ();
-      float qz = myIMU.getQuatK();
-      float qw = myIMU.getQuatReal();
-
-
-      // low pass filter
-      // static float pitch_f = 0;
-      // static float yaw_f = 0;
-
-      // float alpha = 0.9;
-
-      // pitch = alpha * pitch_f + (1 - alpha) * pitch;
-      // yaw   = alpha * yaw_f   + (1 - alpha) * yaw;
-
-      // ------------------------------------
-      // ----JOYSTICK INPUT VALUES HERE------
-      // ------------------------------------
-
-      // note: update desired inputs to joystick inputs
-      // float joystick_x, joystick_y;
-      // joystick_read(joystick_x, joystick_y);
-
-      // ------------------------------------
-      // ------------PID CONTROL-------------
-      // ------------------------------------
-
-      // PITCH POSITION CONTROL
-      // float error_pitch = desired_pitch - pitch;
-      float error_pitch = desired_pitch - pitch;
-
-      if (abs(error_pitch) < 2.0) {   // 1 degree deadband
-        error_pitch = 0;
-      }
-      pid_pos_eqn(error_pitch, Kp_pitch, Ki_pitch, Kd_pitch, gy_pitch, prev_int_pitch, dt);
-      float output_pitch = PIDReturn[0];
-      prev_err_pitch = PIDReturn[1];
-      prev_int_pitch = PIDReturn[2];
-
-      // Positional servo: base neutral position (90) - PID output (reversed)
-      int pitch_servo_cmd = (int)output_pitch + 90;
-      // int pitch_servo_cmd = 90 + output_pitch;
-
-      // YAW RATE CONTROL (with outer cascading position control)
-      float max_yaw_rate = 1.0; // limit max rotation speed
-
-      // Convert position error from degrees to radians for consistent units
-      float error_yaw_rad = (desired_yaw - yaw) * PI / 180.0;
-      // The outer P-controller (Kp_yaw_angle) converts position error (rad) to a desired rate (rad/s)
-      float desired_yaw_rate = Kp_yaw_angle * error_yaw_rad;
-      desired_yaw_rate = constrain(desired_yaw_rate, -3.0, 3.0);
-
-      // The inner PID controller corrects for the difference between desired rate and actual rate (gz_yaw)
-      float error_yaw_rate = desired_yaw_rate - gz_yaw;
-      pid_pos_eqn(error_yaw_rate, Kp_yaw, Ki_yaw, Kd_yaw, gz_yaw, prev_int_yaw, dt);
-      float output_yaw = PIDReturn[0];
-      prev_err_yaw = PIDReturn[1];
-      prev_int_yaw = PIDReturn[2];
-
-      // Scale PID output to overcome servo deadband. The '20.0' is a tuning factor you can adjust.
-      const float yaw_output_scaling = 5.0;
-      int yaw_servo_cmd = constrain(94 - lroundf(output_yaw * yaw_output_scaling), 0, 180);
-
-      // Set servos
-      servoPitch.write(pitch_servo_cmd); // pitch PID output
-      servoYaw.write(yaw_servo_cmd);     // yaw PID output
-
-      Serial.print(pitch);
-      Serial.print(",");
-      Serial.print(pitch_servo_cmd);
-      Serial.print(",");
-      Serial.print(output_pitch);
-      Serial.print(",");
-      Serial.print(yaw);
-      Serial.print(",");
-      Serial.print(output_yaw);
-      Serial.print(",");
-      Serial.println(yaw_servo_cmd);
-      // Serial.print("DATA: ");
-      // Serial.println(myIMU.dataAvailable());
-    }
+  if (IMU.hasReset())
+  {
+    Serial.println("IMU reset!");
+    delay(100);
   }
+  if (IMU.dataAvailable())
+  {
+    q_current.w = IMU.getQuatReal();
+    q_current.x = IMU.getQuatI();
+    q_current.y = IMU.getQuatJ();
+    q_current.z = IMU.getQuatK();
+
+    normalizeQuat(&q_current);
+
+    gyro_x = IMU.getGyroX();
+    gyro_y = IMU.getGyroY();
+    gyro_z = IMU.getGyroZ();
+    float dt = computeSampleDt();
+
+    Quaternion q_inv = quatInverse(q_current);
+    Quaternion q_err = quatMultiply(q_target, q_inv);
+    if (q_err.w < 0)
+    {
+      q_err.w *= -1;
+      q_err.x *= -1;
+      q_err.y *= -1;
+      q_err.z *= -1;
+    }
+
+    float err_x_raw = 2.0f * q_err.x;
+    float err_y_raw = 2.0f * q_err.y;
+    float err_z_raw = 2.0f * q_err.z;
+
+    float err_x = RAD_TO_DEG_F * err_x_raw;
+    float err_y = RAD_TO_DEG_F * err_y_raw;
+    float err_z = RAD_TO_DEG_F * err_z_raw;
+
+    float raw_pitch_error = PITCH_USE_Y_AXIS ? err_y : err_x;
+    float raw_pitch_rate = RAD_TO_DEG_F * (PITCH_USE_Y_AXIS ? gyro_y : gyro_x);
+    float pitch_error = PITCH_ERROR_SIGN * raw_pitch_error;
+    float pitch_rate = PITCH_RATE_SIGN * raw_pitch_rate;
+    float yaw_error = YAW_ERROR_SIGN * err_z_raw;
+    float yaw_rate = YAW_RATE_SIGN * gyro_z;
+    if (abs(pitch_error) < PITCH_DEADBAND)
+    {
+      pitch_error = 0.0f;
+    }
+    if (abs(yaw_error) < YAW_DEADBAND_RAW)
+    {
+      yaw_error = 0.0f;
+    }
+
+    filtered_pitch_error = lowPass(filtered_pitch_error, pitch_error, PITCH_ERROR_FILTER_ALPHA);
+
+    float pitch_cmd = runPID(&pid_pitch, filtered_pitch_error, pitch_rate, dt);
+    float yaw_cmd = runPID(&pid_yaw, yaw_error, yaw_rate, dt);
+
+    pitch_cmd = constrain(pitch_cmd, -PITCH_OUTPUT_LIMIT, PITCH_OUTPUT_LIMIT);
+    yaw_cmd = constrain(yaw_cmd, -YAW_OUTPUT_LIMIT, YAW_OUTPUT_LIMIT);
+
+    float pitch_min_output = constrain(pitch_center - pitch_range_down, 0.0f, 180.0f);
+    float pitch_max_output = constrain(pitch_center + pitch_range_up, 0.0f, 180.0f);
+    float pitch_output_target = constrain(pitch_center + PITCH_OUTPUT_SIGN * pitch_cmd, pitch_min_output, pitch_max_output);
+    float yaw_output_target = constrain(yaw_center - yaw_cmd, 0.0f, 180.0f);
+
+    bool pitch_in_hold_zone =
+        abs(pitch_error) < PITCH_HOLD_BAND_DEG &&
+        abs(pitch_rate) < PITCH_HOLD_RATE_DPS &&
+        abs(pitch_output_target - pitch_output_state) < PITCH_HOLD_OUTPUT_BAND_DEG;
+    if (pitch_in_hold_zone)
+    {
+      pitch_output_target = pitch_output_state;
+      pid_pitch.integ *= 0.98f;
+    }
+
+    pitch_output_state = slewLimit(pitch_output_state, pitch_output_target, PITCH_OUTPUT_SLEW_DPS, dt);
+    yaw_output_state = slewLimit(yaw_output_state, yaw_output_target, YAW_OUTPUT_SLEW_DPS, dt);
+
+    servoPitch.write(pitch_output_state);
+    servoYaw.write(yaw_output_state);
+
+    // Serial.print(dt, 4);
+    Serial.print(pid_pitch);
+    Serial.print(",");
+    Serial.pring(pid_yaw);
+    Serial.print(",");
+    Serial.print(pitch_output_state);
+    Serial.print(",");
+    Serial.println(yaw_output_state);
+    // Serial.printf("x:%f y:%f z:%f\n", err_x, err_y, err_z);
+  }
+}
