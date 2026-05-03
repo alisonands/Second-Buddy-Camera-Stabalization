@@ -1,4 +1,4 @@
-// testTransmitter.ino
+// baseStation.ino
 
 #include <WiFi.h>
 #include <esp_now.h>
@@ -11,6 +11,7 @@ struct ControlPacket {
   int16_t x;
   int16_t y;
   uint8_t btn;
+  uint8_t mode;
 };
 ControlPacket pkt;
 
@@ -23,15 +24,10 @@ const int pinButtn = 32;
 int xCenter;
 int yCenter;
 
-/*
-void onDataSend(const wifi_tx_info_t * mac, esp_now_send_status_t status)
-{
-  Serial.print("\r\nLast Packet Send Status:\t ");
-  Serial.println(status);
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Message sent" : "Message failed");
-}
-*/
-
+// openCV commands
+int ex = 0;
+int ey = 0;
+int mode = 0;
 
 // ================================================
 //                      SETUP
@@ -90,11 +86,29 @@ void setup() {
 //                     MAIN LOOP
 // ================================================
 void loop() {
-  // read joystick
-  pkt = getControl(pinXaxis, pinYaxis, xCenter, yCenter);
+  // read computer inputs
+  if (Serial.available()) {
+    String msg = Serial.readStringUntil('\n');
+    sscanf(msg.c_str(), "%d,%d,%d", &ex, &ey, &mode);
+    // Serial.printf("Error x-axis: %d, Error y-axis: %d\n | Mode is: %d", ex, ey, mode); // debug
+  }
+  pkt.mode = mode;
 
-  // send data
-  esp_now_send(receiverMACAddress, (uint8_t *) &pkt, sizeof(pkt));
+  // joystick control loop
+  if (mode == 0){
+    // read joystick
+    pkt = getControl(pinXaxis, pinYaxis, xCenter, yCenter);
+
+    // send data
+    esp_now_send(receiverMACAddress, (uint8_t *) &pkt, sizeof(pkt));
+  }
+  // openCV control loop
+  else {
+    pkt.x = ex;
+    pkt.y = ey;
+    pkt.btn = 1;
+  }
+
   delay(30);
 }
 

@@ -7,8 +7,8 @@ void loop() {
   if (Serial.available()) {
     String msg = Serial.readStringUntil('\n');
     
-    float ex, ey;
-    sscanf(msg.c_str(), "%f,%f", &ex, &ey);
-    Serial.printf("Error x-axis: %.2f, Error y-axis: %.2f\n", ex, ey); // temp
+    int ex, ey, mode;
+    sscanf(msg.c_str(), "%d,%d,%d", &ex, &ey, &mode);
+    // Serial.printf("Error x-axis: %d, Error y-axis: %d\n | Mode is: %d", ex, ey, mode); // debug
   }
 }

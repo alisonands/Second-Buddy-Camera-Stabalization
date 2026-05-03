@@ -3,15 +3,29 @@
 #include <Wire.h>
 #include "SparkFun_BNO080_Arduino_Library.h"
 #include <ESP32Servo.h>
+#include "pid_pos.h"
+#include <WiFi.h>
+#include <esp_now.h>
 #include "gimbal_target.h"
 
-// ------ DEFINE I2C PINS -------
+// ------- DEFINE I2C PINS --------
 #define SDA_PIN 21
 #define SCL_PIN 22
 #define BNO_ADDR 0x4B
 
 // --------- BNO080 GYRO ----------
 BNO080 IMU;
+
+// ------------ ESP-NOW -----------
+struct ControlPacket {
+  int16_t x;
+  int16_t y;
+  uint8_t btn;
+  uint8_t mode;
+};
+ControlPacket pkt;
+uint8_t btn_prev = 0;
+bool laser_state = false;
 
 // Servo
 Servo servoPitch;
@@ -261,6 +275,12 @@ void handleSerialTargetInput()
   Serial.println("Send: <pitch_deg> <yaw_deg>  or  zero");
 }
 
+// callback on receiving packet
+void onDataRecv(const esp_now_recv_info * info, const uint8_t * incomingData, int len)
+{
+  memcpy(&pkt, incomingData, sizeof(pkt)); // update packet information
+}
+
 // setup
 void setup()
 {
@@ -287,11 +307,26 @@ void setup()
   }
 
   Serial.println("Connected, initializing...");
-
   delay(500);
+
+  // initialize esp-now protocol
+  WiFi.mode(WIFI_MODE_STA);
+  if (esp_now_init() != ESP_OK)
+  {
+    Serial.println("Error initializing ESP-NOW protocol");
+    return;
+  }
+  else
+  {
+    Serial.println("Successfully initialized ESP-NOW protocol");
+  }
+
+  // set callback function when receiving data
+  esp_now_register_recv_cb(onDataRecv);
 
   IMU.enableRotationVector(IMU_REPORT_INTERVAL_MS);
   delay(200);
+
   IMU.enableGyro(IMU_REPORT_INTERVAL_MS);
 
   Serial.println("IMU ready");
@@ -370,6 +405,32 @@ void loop()
     float yaw_rate = YAW_RATE_SIGN * gyro_z;
     if (abs(pitch_error) < PITCH_DEADBAND)
     {
+      // ------------------------------------
+      // -------BASE STATION CONTROLS--------
+      // ------------------------------------
+      if (pkt.mode == 0) 
+      {
+        // open loop control; commands range from -1 to 1
+        desired_yaw   += float(pkt.x) * 0.1f;
+        desired_pitch += float(pkt.y) * 0.1f;
+      }
+      else
+      {
+        // openCV tracking mode; commands range from -1000 to 1000
+        desired_yaw   += float(pkt.x) * (0.1f / 1000.0f);
+        desired_pitch += float(pkt.y) * (0.1f / 1000.0f);
+      }
+
+      // edge detection for laser toggle
+      if (pkt.btn == 0 && btn_prev == 1)
+      {
+        // falling edge (released)
+        laser_state = !laser_state;
+        // digitalWrite(laserPin, laser_state); // need to define our laser pin
+      }
+
+      btn_prev = pkt.btn;
+
       pitch_error = 0.0f;
     }
     if (abs(yaw_error) < YAW_DEADBAND_RAW)
