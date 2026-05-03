@@ -2,14 +2,27 @@
 #include "SparkFun_BNO080_Arduino_Library.h"
 #include <ESP32Servo.h>
 #include "pid_pos.h"
+#include <WiFi.h>
+#include <esp_now.h>
 
-// ------ DEFINE I2C PINS -------
+// ------- DEFINE I2C PINS --------
 #define SDA_PIN 21
 #define SCL_PIN 22
 #define BNO_ADDR 0x4B
 
 // --------- BNO080 GYRO ----------
 BNO080 myIMU;
+
+// ------------ ESP-NOW -----------
+struct ControlPacket {
+  int16_t x;
+  int16_t y;
+  uint8_t btn;
+  uint8_t mode;
+};
+ControlPacket pkt;
+uint8_t btn_prev = 0;
+bool laser_state = false;
 
 // Servo
 Servo servoPitch;
@@ -35,6 +48,12 @@ float prev_int_roll, prev_int_pitch, prev_int_yaw;
 unsigned long lastLoopTime = 0;
 const unsigned long loopInterval = 50; // ms = 20 Hz
 float dt = 0.05;
+
+// callback on receiving packet
+void onDataRecv(const esp_now_recv_info * info, const uint8_t * incomingData, int len)
+{
+  memcpy(&pkt, incomingData, sizeof(pkt)); // update packet information
+}
 
 void setup()
 {
@@ -69,6 +88,21 @@ void setup()
   delay(200);
   myIMU.enableGyro(50); // 50ms = 20Hz
   Serial.println("IMU ready. End of setup.");
+  
+  // initialize esp-now protocol
+  WiFi.mode(WIFI_MODE_STA);
+  if (esp_now_init() != ESP_OK)
+  {
+    Serial.println("Error initializing ESP-NOW protocol");
+    return;
+  }
+  else
+  {
+    Serial.println("Successfully initialized ESP-NOW protocol");
+  }
+
+  // set callback function when receiving data
+  esp_now_register_recv_cb(onDataRecv);
 }
 
 void loop()
@@ -120,12 +154,30 @@ void loop()
       // yaw   = alpha * yaw_f   + (1 - alpha) * yaw;
 
       // ------------------------------------
-      // ----JOYSTICK INPUT VALUES HERE------
+      // -------BASE STATION CONTROLS--------
       // ------------------------------------
+      if (pkt.mode == 0) 
+      {
+        // open loop control; commands range from -1 to 1
+        desired_yaw   += float(pkt.x) * 0.1f;
+        desired_pitch += float(pkt.y) * 0.1f;
+      }
+      else
+      {
+        // openCV tracking mode; commands range from -1000 to 1000
+        desired_yaw   += float(pkt.x) * (0.1f / 1000.0f);
+        desired_pitch += float(pkt.y) * (0.1f / 1000.0f);
+      }
 
-      // note: update desired inputs to joystick inputs
-      // float joystick_x, joystick_y;
-      // joystick_read(joystick_x, joystick_y);
+      // edge detection for laser toggle
+      if (pkt.btn == 0 && btn_prev == 1)
+      {
+        // falling edge (released)
+        laser_state = !laser_state;
+        // digitalWrite(laserPin, laser_state); // need to define our laser pin
+      }
+
+      btn_prev = pkt.btn;
 
       // ------------------------------------
       // ------------PID CONTROL-------------
