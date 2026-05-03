@@ -9,7 +9,6 @@ ser = serial.Serial("COM6", 115200, timeout=0)
 last_read = 0
 
 # Load pretrained YOLO model (COCO dataset)
-# model = YOLO("yolov8n.pt")
 model = YOLO("yolo26n.pt")
 # model.to("cuda") # enable GPU usage, oh wait im using AMD
 
