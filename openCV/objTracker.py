@@ -174,8 +174,13 @@ while True:
     ex_int = int(round(ex * 1000))
     ey_int = int(round(ey * 1000))
 
-    ser.write(f"{ex_int},{ey_int}\n".encode()) # send error to COM-connected ESP
-    
+    ser.write(f"{ex_int},{ey_int},{int(lock_active)}\n".encode()) # send error to COM-connected ESP
+
+    # debug: read serial monitor
+    #if ser.in_waiting:
+    #    data = ser.read(ser.in_waiting).decode(errors="ignore")
+    #    print(data.strip())
+
     # play stream
     cv2.imshow("Stream", annotated)
 

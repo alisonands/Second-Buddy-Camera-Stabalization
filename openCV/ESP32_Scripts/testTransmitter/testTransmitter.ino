@@ -5,15 +5,7 @@
 
 // receiver (blue) MAC address: 4C:11:AE:7E:DC:84
 // esp32-cam MAC address: 1C:C3:AB:D2:3A:04
-uint8_t receiverMACAddress[] = {0x1C, 0xC3, 0xAB, 0xD2, 0x3A, 0x04};
-
-// define data packets
-struct PacketData
-{
-  byte switch1Value;
-  byte switch2Value; 
-};
-PacketData data;
+uint8_t receiverMACAddress[] = {0x4C, 0x11, 0xAE, 0x7E, 0xDC, 0x84};
 
 struct ControlPacket {
   int16_t x;
@@ -75,12 +67,8 @@ void setup() {
     Serial.println("Successfully added peer");
   }
 
-  // set callback function when sending data
-  // esp_now_register_send_cb(onDataSend);
-
-  // =========================
   // Joystick Initialization
-  // =========================
+
   // ADC pins are input by default, but explicit doesn't hurt 
   pinMode(pinXaxis, INPUT);
   pinMode(pinYaxis, INPUT);
@@ -89,13 +77,11 @@ void setup() {
 
   // quick calibration
   long xSum = 0, ySum = 0;
-
   for (int i = 0; i < 100; i++) {
     xSum += analogRead(pinXaxis);
     ySum += analogRead(pinYaxis);
     delay(5);
   }
-
   xCenter = xSum / 100;
   yCenter = ySum / 100;
 }
