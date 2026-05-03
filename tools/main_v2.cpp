@@ -1,9 +1,6 @@
-// adding joystick input
-
 #include <Wire.h>
 #include "SparkFun_BNO080_Arduino_Library.h"
 #include <ESP32Servo.h>
-#include "gimbal_target.h"
 
 // ------ DEFINE I2C PINS -------
 #define SDA_PIN 21
@@ -24,7 +21,7 @@ constexpr float RAD_TO_DEG_F = 57.2957795f;
 constexpr float DT_FALLBACK = 0.02f;
 constexpr float DT_MIN = 0.001f;
 constexpr float DT_MAX = 0.1f;
-constexpr float PITCH_DEADBAND = 0.10f;
+constexpr float PITCH_DEADBAND = 0.20f;
 constexpr float YAW_DEADBAND_RAW = 0.02f;
 constexpr float PITCH_OUTPUT_SLEW_DPS = 90.0f;
 constexpr float YAW_OUTPUT_SLEW_DPS = 220.0f;
@@ -41,16 +38,12 @@ constexpr float PITCH_RATE_SIGN = -1.0f;
 constexpr float PITCH_OUTPUT_SIGN = 1.0f;
 constexpr float YAW_ERROR_SIGN = 1.0f;
 constexpr float YAW_RATE_SIGN = 1.0f;
-constexpr float DEG_TO_RAD_F = 0.01745329252f;
 
 float pitch_center = 100.0;
 float yaw_center = 94.0;
 
 float pitch_range_down = 90;
 float pitch_range_up = 45;
-
-float desired_pitch_deg = 0.0f;
-float desired_yaw_deg = 0.0f;
 
 uint32_t last_sample_us = 0;
 float pitch_output_state = 90.0f;
@@ -135,7 +128,6 @@ float runPID(PID *pid, float error, float gyroRate, float dt)
 
 // global variables
 Quaternion q_current;
-Quaternion q_home;
 Quaternion q_target;
 
 PID pid_pitch = {.kp = 1.60, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
@@ -172,93 +164,6 @@ float slewLimit(float current, float target, float max_rate_deg_per_sec, float d
 {
   float max_step = max_rate_deg_per_sec * dt;
   return current + constrain(target - current, -max_step, max_step);
-}
-
-Quaternion quatFromAxisAngle(float ax, float ay, float az, float degrees)
-{
-  float half_angle = 0.5f * degrees * DEG_TO_RAD_F;
-  float s = sinf(half_angle);
-  Quaternion q = {cosf(half_angle), ax * s, ay * s, az * s};
-  normalizeQuat(&q);
-  return q;
-}
-
-void updateTargetFromDegrees()
-{
-  Quaternion q_pitch = PITCH_USE_Y_AXIS
-                           ? quatFromAxisAngle(0.0f, 1.0f, 0.0f, desired_pitch_deg)
-                           : quatFromAxisAngle(1.0f, 0.0f, 0.0f, desired_pitch_deg);
-  Quaternion q_yaw = quatFromAxisAngle(0.0f, 0.0f, 1.0f, desired_yaw_deg);
-  Quaternion q_offset = quatMultiply(q_yaw, q_pitch);
-  q_target = quatMultiply(q_offset, q_home);
-  normalizeQuat(&q_target);
-}
-
-void resetPitchControlState()
-{
-  filtered_pitch_error = 0.0f;
-  pid_pitch.integ = 0.0f;
-}
-
-void setDesiredAnglesDeg(float pitch_deg, float yaw_deg)
-{
-  desired_pitch_deg = pitch_deg;
-  desired_yaw_deg = yaw_deg;
-  updateTargetFromDegrees();
-  resetPitchControlState();
-}
-
-void offsetDesiredAnglesDeg(float pitch_delta_deg, float yaw_delta_deg)
-{
-  setDesiredAnglesDeg(desired_pitch_deg + pitch_delta_deg, desired_yaw_deg + yaw_delta_deg);
-}
-
-GimbalTargetDegrees getDesiredAnglesDeg()
-{
-  return {desired_pitch_deg, desired_yaw_deg};
-}
-
-void zeroDesiredAnglesAtCurrentPose()
-{
-  q_home = q_current;
-  setDesiredAnglesDeg(0.0f, 0.0f);
-}
-
-void handleSerialTargetInput()
-{
-  if (!Serial.available())
-  {
-    return;
-  }
-
-  String line = Serial.readStringUntil('\n');
-  line.trim();
-  if (line.length() == 0)
-  {
-    return;
-  }
-
-  if (line.equalsIgnoreCase("zero"))
-  {
-    zeroDesiredAnglesAtCurrentPose();
-    Serial.println("Target reset to 0,0 at current orientation");
-    return;
-  }
-
-  float pitch_deg = 0.0f;
-  float yaw_deg = 0.0f;
-  int parsed = sscanf(line.c_str(), "%f %f", &pitch_deg, &yaw_deg);
-  if (parsed == 2)
-  {
-    setDesiredAnglesDeg(pitch_deg, yaw_deg);
-    Serial.print("Target degrees set to ");
-    Serial.print(desired_pitch_deg, 2);
-    Serial.print(",");
-    Serial.println(desired_yaw_deg, 2);
-    return;
-  }
-
-  Serial.println("Send: <pitch_deg> <yaw_deg>  or  zero");
 }
 
 // setup
@@ -309,22 +214,16 @@ void setup()
   }
 
   normalizeQuat(&q_current);
-  q_home = q_current;
-  updateTargetFromDegrees();
+  q_target = q_current;
   last_sample_us = micros();
   pitch_output_state = pitch_center;
   yaw_output_state = yaw_center;
   servoPitch.write(pitch_output_state);
   servoYaw.write(yaw_output_state);
-  Serial.println("Send target as: <pitch_deg> <yaw_deg>");
-  Serial.println("Example: 10 -15");
-  Serial.println("Send 'zero' to redefine the current orientation as 0,0");
 }
 
 void loop()
 {
-  handleSerialTargetInput();
-
   if (IMU.hasReset())
   {
     Serial.println("IMU reset!");
@@ -407,10 +306,10 @@ void loop()
     servoYaw.write(yaw_output_state);
 
     // Serial.print(dt, 4);
-    // Serial.print(pid_pitch);
-    // Serial.print(",");
-    // Serial.print(pid_yaw);
-    // Serial.print(",");
+    Serial.print(pid_pitch);
+    Serial.print(",");
+    Serial.pring(pid_yaw);
+    Serial.print(",");
     Serial.print(pitch_output_state);
     Serial.print(",");
     Serial.println(yaw_output_state);
