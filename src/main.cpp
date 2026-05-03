@@ -22,8 +22,8 @@ float desired_yaw = 0.0;
 float desired_pitch = 0.0;
 
 // PID VALUES
-float Kp_pitch = 2.0, Ki_pitch = 0.1, Kd_pitch = 0.0;             // position control for pitch
-float Kp_yaw = 2.0, Ki_yaw = 0.01, Kd_yaw = 0.01;                   // rate control for yaw
+float Kp_pitch = 1.0, Ki_pitch = 0.0, Kd_pitch = 0.001;             // position control for pitch
+float Kp_yaw = 1.0, Ki_yaw = 0.0, Kd_yaw = 0.1;                   // rate control for yaw
 float Kp_yaw_angle = 1.0, Ki_yaw_angle = 0.0, Kd_yaw_angle = 0.0; // outer loop position control for yaw
 // float dt = 0.05;                                                  // 50ms delay
 // int desiredOmegaX = 20;
@@ -103,6 +103,22 @@ void loop()
       float gy_pitch = myIMU.getGyroY();
       float gz_yaw = myIMU.getGyroZ();
 
+      // Quaternions
+      float qx = myIMU.getQuatI();
+      float qy = myIMU.getQuatJ();
+      float qz = myIMU.getQuatK();
+      float qw = myIMU.getQuatReal();
+
+
+      // low pass filter
+      // static float pitch_f = 0;
+      // static float yaw_f = 0;
+
+      // float alpha = 0.9;
+
+      // pitch = alpha * pitch_f + (1 - alpha) * pitch;
+      // yaw   = alpha * yaw_f   + (1 - alpha) * yaw;
+
       // ------------------------------------
       // ----JOYSTICK INPUT VALUES HERE------
       // ------------------------------------
@@ -116,14 +132,20 @@ void loop()
       // ------------------------------------
 
       // PITCH POSITION CONTROL
+      // float error_pitch = desired_pitch - pitch;
       float error_pitch = desired_pitch - pitch;
-      pid_pos_eqn(error_pitch, Kp_pitch, Ki_pitch, Kd_pitch, prev_err_pitch, prev_int_pitch, dt);
+
+      if (abs(error_pitch) < 2.0) {   // 1 degree deadband
+        error_pitch = 0;
+      }
+      pid_pos_eqn(error_pitch, Kp_pitch, Ki_pitch, Kd_pitch, gy_pitch, prev_int_pitch, dt);
       float output_pitch = PIDReturn[0];
       prev_err_pitch = PIDReturn[1];
       prev_int_pitch = PIDReturn[2];
 
       // Positional servo: base neutral position (90) - PID output (reversed)
-      int pitch_servo_cmd = constrain((int)output_pitch + 79, -11, 79);
+      int pitch_servo_cmd = (int)output_pitch + 90;
+      // int pitch_servo_cmd = 90 + output_pitch;
 
       // YAW RATE CONTROL (with outer cascading position control)
       float max_yaw_rate = 1.0; // limit max rotation speed
@@ -136,7 +158,7 @@ void loop()
 
       // The inner PID controller corrects for the difference between desired rate and actual rate (gz_yaw)
       float error_yaw_rate = desired_yaw_rate - gz_yaw;
-      pid_pos_eqn(error_yaw_rate, Kp_yaw, Ki_yaw, Kd_yaw, prev_err_yaw, prev_int_yaw, dt);
+      pid_pos_eqn(error_yaw_rate, Kp_yaw, Ki_yaw, Kd_yaw, gz_yaw, prev_int_yaw, dt);
       float output_yaw = PIDReturn[0];
       prev_err_yaw = PIDReturn[1];
       prev_int_yaw = PIDReturn[2];
@@ -149,22 +171,14 @@ void loop()
       servoPitch.write(pitch_servo_cmd); // pitch PID output
       servoYaw.write(yaw_servo_cmd);     // yaw PID output
 
-      // Serial.print(roll);
-      // Serial.print(",");
-      // Serial.print(pitch);
-      // Serial.print(",");
+      Serial.print(pitch);
+      Serial.print(",");
+      Serial.print(pitch_servo_cmd);
+      Serial.print(",");
+      Serial.print(output_pitch);
+      Serial.print(",");
       Serial.print(yaw);
       Serial.print(",");
-      // Serial.print(gz_yaw, 1);
-      // Serial.print(",");
-      // Serial.print(gx_roll, 1);
-      // Serial.print(",");
-      // Serial.print(gy_pitch, 1);
-      // Serial.print(",");
-      // Serial.print(pitch_servo_cmd);
-      // Serial.print(",");
-      // Serial.print(output_pitch);
-      // Serial.print(",");
       Serial.print(output_yaw);
       Serial.print(",");
       Serial.println(yaw_servo_cmd);
