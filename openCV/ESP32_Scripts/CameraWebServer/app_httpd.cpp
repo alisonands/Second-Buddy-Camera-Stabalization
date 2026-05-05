@@ -672,6 +672,30 @@ static esp_err_t index_handler(httpd_req_t *req) {
   }
 }
 
+static esp_err_t led_handler(httpd_req_t *req)
+{
+  char buf[8];
+
+  if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
+    httpd_resp_send(req, "Missing query", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+  }
+
+  char val[8];
+  if (httpd_query_key_value(buf, "val", val, sizeof(val)) != ESP_OK) {
+    httpd_resp_send(req, "Missing val", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+  }
+
+  int v = atoi(val);
+
+  // Most ESP32-CAM boards: active LOW LED
+  ledcWrite(LED_GPIO_NUM, v ? 255 : 0);
+
+  httpd_resp_send(req, v ? "LED ON" : "LED OFF", HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_uri_handlers = 16;
@@ -728,6 +752,18 @@ void startCameraServer() {
 #endif
   };
 
+  httpd_uri_t led_uri = {
+    .uri = "/led",
+    .method = HTTP_GET,
+    .handler = led_handler,
+    .user_ctx = NULL
+  #ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+  #endif
+  };
   httpd_uri_t stream_uri = {
     .uri = "/stream",
     .method = HTTP_GET,
@@ -834,6 +870,8 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+
+    httpd_register_uri_handler(camera_httpd, &led_uri);
   }
 
   config.server_port += 1;
