@@ -26,9 +26,6 @@ struct ControlPacket
 };
 ControlPacket pkt;
 
-uint8_t btn_prev = 0;
-bool laser_state = false;
-
 // Servo
 Servo servoPitch;
 Servo servoYaw;
@@ -43,18 +40,8 @@ constexpr float RAD_TO_DEG_F = 57.2957795f;
 constexpr float DT_FALLBACK = 0.02f;
 constexpr float DT_MIN = 0.001f;
 constexpr float DT_MAX = 0.1f;
-constexpr float PITCH_DEADBAND = 0.0f;
-constexpr float YAW_DEADBAND = 0.0f;
-constexpr float PITCH_OUTPUT_SLEW_DPS = 90.0f;
-constexpr float YAW_OUTPUT_SLEW_DPS = 220.0f;
-constexpr float PITCH_OUTPUT_LIMIT = 46.0f;
-constexpr float YAW_OUTPUT_LIMIT = 8.0f;
 constexpr float PITCH_ERROR_FILTER_ALPHA = 0.12f;
-constexpr float PITCH_HOLD_BAND_DEG = 1.0f;         // for ~deg stabalization
-constexpr float PITCH_HOLD_RATE_DPS = 8.0f;         // dont do anything if pitch rate is under 8 deg/s
-constexpr float PITCH_HOLD_OUTPUT_BAND_DEG = 0.49f; // if requested servo move is under 0.49
 // Set PITCH_USE_Y_AXIS to true if the serial x/y/z print shows pitch motion on y.
-constexpr bool PITCH_USE_Y_AXIS = true;
 constexpr float PITCH_ERROR_SIGN = 1.0f;
 constexpr float PITCH_RATE_SIGN = -1.0f;
 constexpr float PITCH_OUTPUT_SIGN = 1.0f;
@@ -62,20 +49,26 @@ constexpr float YAW_ERROR_SIGN = 1.0f;
 constexpr float YAW_RATE_SIGN = 1.0f;
 constexpr float DEG_TO_RAD_F = 0.01745329252f;
 
+// manual calibration
 float pitch_center = 103.0f;
 float yaw_center = 96.0f;
 
-float pitch_range_down = 90;
-float pitch_range_up = 45;
+// motor states
+float pitchMotorAngle = pitch_center;
+float yawMotorAngle = yaw_center;
 
+// desired angles
 float desired_roll = 0.0f;
 float desired_pitch = 0.0f;
 float desired_yaw = 0.0f;
 
+// error processing
 uint32_t last_sample_us = 0;
-float pitch_output_state = 100.0f;
-float yaw_output_state = 94.0f;
 float filtered_pitch_error = 0.0f;
+
+// stabilization toggle
+bool stab_mode = true;
+uint8_t stab_prev = 0;
 
 // Data structures
 typedef struct
@@ -104,10 +97,6 @@ typedef struct
   float pitch;
   float roll;
 } EulerDeg;
-
-// axis alignment
-// float pitch_error = err_x;
-// float yaw_error   = err_z;
 
 // Quaternions
 void normalizeQuat(Quaternion *q)
@@ -176,7 +165,6 @@ EulerDeg dcmToEulerDeg(DCM dcm)
 // PID
 float runPID(PID *pid, float error, float gyroRate, float dt)
 {
-
   float p = pid->kp * error;
 
   // Integral
@@ -258,7 +246,7 @@ void onDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len)
   memcpy(&pkt, incomingData, sizeof(pkt)); // update packet information
 }
 
-// setup
+// ------------- setup -------------
 void setup()
 {
   Serial.begin(115200);
@@ -329,10 +317,7 @@ void setup()
   last_sample_us = micros();
 }
 
-float pitchMotorAngle = pitch_center;
-float yawMotorAngle = yaw_center;
-bool stab_mode = true;
-uint8_t stab_prev = 0;
+// ----------- main loop -----------
 void loop()
 {
   // edge detection for stabilization mode
@@ -345,6 +330,7 @@ void loop()
   // enable stabilization
   if (stab_mode) 
   {
+    // enter main loop
     if (IMU.hasReset())
     {
       Serial.println("IMU reset!");
@@ -372,13 +358,13 @@ void loop()
       if (err_att_yaw > 180.0f)  err_att_yaw -= 360.0f;
       if (err_att_yaw < -180.0f) err_att_yaw += 360.0f;
 
+      // error postprocessing
       Vector3 err_att = {
         desired_roll - cur_att_Euler.roll,
         desired_pitch - cur_att_Euler.pitch,
         err_att_yaw
       };
-
-      // error postprocessing
+      
       float pitch_error = PITCH_ERROR_SIGN * err_att.y;
       float pitch_rate = PITCH_RATE_SIGN * gyro_y;
       float yaw_error = YAW_ERROR_SIGN * err_att.z;
@@ -400,16 +386,6 @@ void loop()
         desired_pitch += float(pkt.y) * (0.50f / 1000.0f);
       }
 
-      // // edge detection for laser toggle
-      // if (pkt.btn == 0 && btn_prev == 1)
-      // {
-      //   // falling edge (released)
-      //   laser_state = !laser_state;
-      //   // digitalWrite(laserPin, laser_state); // need to define our laser pin
-      // }
-      //
-      // btn_prev = pkt.btn;
-
       // PID feedback
       float dt = computeSampleDt();
       float pitch_cmd = runPID(&pid_pitch, filtered_pitch_error, pitch_rate, dt);
@@ -423,10 +399,15 @@ void loop()
       servoYaw.write(yaw_output_state);
     }
   }
+  // disable stabilization
   else
   {
-    // need to continuously measure states
-    // newly-measured states will act as our desired angles when reentering stabilization
+    /*
+      enter secondary loop, no stabilization.
+
+      need to continuously measure states.
+      newly-measured states will act as our desired angles when reentering stabilization.
+    */
     if (IMU.hasReset())
     {
       Serial.println("IMU reset!");
