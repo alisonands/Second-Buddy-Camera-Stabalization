@@ -182,8 +182,8 @@ Quaternion q_current;
 Quaternion q_home;
 Quaternion q_target;
 
-PID pid_pitch = {.kp = 0.075, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
-PID pid_yaw = {.kp = 0.50, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 10}; // not true PID, motor turns left if input < 94 and right if > 98
+PID pid_pitch = {.kp = 0.110, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
+PID pid_yaw = {.kp = 0.9, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 10}; // not true PID, motor turns left if input < 94 and right if > 98
 
 float gyro_x, gyro_y, gyro_z;
 
@@ -230,15 +230,6 @@ void writePitchPwm(float pitch_deg)
   servoPitch.writeMicroseconds(pitchDegreesToMicros(pitch_deg));
 }
 
-// apply DCM transformation to vector
-Vector3 rotateByDCM(const DCM& dcm, const Vector3& v)
-{
-    return {
-        dcm.m[0][0]*v.x + dcm.m[0][1]*v.y + dcm.m[0][2]*v.z,
-        dcm.m[1][0]*v.x + dcm.m[1][1]*v.y + dcm.m[1][2]*v.z,
-        dcm.m[2][0]*v.x + dcm.m[2][1]*v.y + dcm.m[2][2]*v.z
-    };
-}
 
 // callback on receiving packet
 void onDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len)
@@ -364,6 +355,10 @@ void loop()
         desired_pitch - cur_att_Euler.pitch,
         err_att_yaw
       };
+      // Serial.print((cur_att_Euler.yaw-60)/180);
+      // Serial.print(",");
+      // Serial.println(cur_att_Euler.pitch/90);
+      
       
       float pitch_error = PITCH_ERROR_SIGN * err_att.y;
       float pitch_rate = PITCH_RATE_SIGN * gyro_y;
@@ -428,6 +423,11 @@ void loop()
 
       desired_pitch = cur_att_Euler.pitch;
       desired_yaw = cur_att_Euler.yaw;
+
+      // Serial.print((cur_att_Euler.yaw-60)/180);
+      // Serial.print(",");
+      // Serial.println(cur_att_Euler.pitch/90);
     }
+
   }
 }
