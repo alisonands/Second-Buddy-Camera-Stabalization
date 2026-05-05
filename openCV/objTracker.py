@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import cv2
 import requests
 import serial
+import time
 
 # connect via serial
 ser = serial.Serial("COM6", 115200, timeout=0)
@@ -11,8 +12,8 @@ model = YOLO("yolo26n.pt")
 # model.to("cuda") # enable GPU usage, oh wait im using AMD
 
 # ESP32-CAM stream
-esp_ip = "192.168.1.57" # testing camera
-# esp_ip = "192.168.1.41" # primary camera
+# esp_ip = "192.168.1.57" # testing camera
+esp_ip = "192.168.1.41" # primary camera
 url = f"http://{esp_ip}:81/stream"
 
 # Configure stream
@@ -29,7 +30,11 @@ if not cap.isOpened():
     print("Failed to open stream")
     exit()
 
-
+# LED state control
+led_state = 0
+last_toggle_time = 0.0
+TOGGLE_COOLDOWN = 0.25   # ignore repeated presses within 1 second
+buffer = ""
 
 # -----------------------------
 # IoU FUNCTION
@@ -174,12 +179,26 @@ while True:
     ex_int = int(round(ex * 1000))
     ey_int = int(round(ey * 1000))
 
-    ser.write(f"{ex_int},{ey_int},{int(lock_active)}\n".encode()) # send error to COM-connected ESP
+    ser.write(f"{ex_int},{ey_int},{int(lock_active and tracking_box is not None)}\n".encode()) # send error to COM-connected ESP
 
     # debug: read serial monitor
-    #if ser.in_waiting:
-    #    data = ser.read(ser.in_waiting).decode(errors="ignore")
-    #    print(data.strip())
+    if ser.in_waiting:
+        #data = ser.read(ser.in_waiting).decode(errors="ignore")
+        #print(data.strip())
+        buffer += ser.read(ser.in_waiting).decode(errors="ignore")
+    
+        for ch in buffer:
+            if ch != "1":
+                continue
+
+            now = time.time()
+
+            # only allow toggle if enough time passed
+            if now - last_toggle_time > TOGGLE_COOLDOWN:
+                led_state ^= 1
+                last_toggle_time = now
+
+                requests.get(f"http://{esp_ip}/led?val={led_state}")
 
     # play stream
     cv2.imshow("Stream", annotated)
