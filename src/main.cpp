@@ -182,8 +182,8 @@ Quaternion q_current;
 Quaternion q_home;
 Quaternion q_target;
 
-PID pid_pitch = {.kp = 0.075, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
-PID pid_yaw = {.kp = 0.50, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 10}; // not true PID, motor turns left if input < 94 and right if > 98
+PID pid_pitch = {.kp = 0.10, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 8};
+PID pid_yaw = {.kp = 0.90, .ki = 0.0, .kd = 0.0, .integ = 0, .integLimit = 10}; // not true PID, motor turns left if input < 94 and right if > 98
 
 float gyro_x, gyro_y, gyro_z;
 
