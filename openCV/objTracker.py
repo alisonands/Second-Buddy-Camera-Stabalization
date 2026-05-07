@@ -13,7 +13,8 @@ model = YOLO("yolo26n.pt")
 
 # ESP32-CAM stream
 # esp_ip = "192.168.1.57" # testing camera
-esp_ip = "192.168.1.41" # primary camera
+# esp_ip = "192.168.1.41" # primary camera
+esp_ip = "10.253.255.154" # demo IP
 url = f"http://{esp_ip}:81/stream"
 
 # Configure stream
