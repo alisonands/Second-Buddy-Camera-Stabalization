@@ -318,32 +318,34 @@ void loop()
   }
   stab_prev = pkt.stab;
 
-  // enable stabilization
-  if (stab_mode) 
+  // IMU health status
+  if (IMU.hasReset())
   {
-    // enter main loop
-    if (IMU.hasReset())
+    Serial.println("IMU reset!");
+    delay(100);
+  }
+
+  // measure data
+  if (IMU.dataAvailable())
+  {
+    q_current.w = IMU.getQuatReal();
+    q_current.x = IMU.getQuatI();
+    q_current.y = IMU.getQuatJ();
+    q_current.z = IMU.getQuatK();
+
+    normalizeQuat(&q_current);
+
+    // get current attitude from quaternions
+    DCM cur_att = quatToDCM(q_current);
+    EulerDeg cur_att_Euler = dcmToEulerDeg(cur_att);
+
+    gyro_x = IMU.getGyroX();
+    gyro_y = IMU.getGyroY();
+    gyro_z = IMU.getGyroZ();
+
+    //stabilization loop
+    if (stab_mode) 
     {
-      Serial.println("IMU reset!");
-      delay(100);
-    }
-    if (IMU.dataAvailable())
-    {
-      q_current.w = IMU.getQuatReal();
-      q_current.x = IMU.getQuatI();
-      q_current.y = IMU.getQuatJ();
-      q_current.z = IMU.getQuatK();
-
-      normalizeQuat(&q_current);
-
-      // get current attitude from quaternions
-      DCM cur_att = quatToDCM(q_current);
-      EulerDeg cur_att_Euler = dcmToEulerDeg(cur_att);
-
-      gyro_x = IMU.getGyroX();
-      gyro_y = IMU.getGyroY();
-      gyro_z = IMU.getGyroZ();
-      
       // handle yaw wraparound at 180 degrees
       float err_att_yaw = desired_yaw - cur_att_Euler.yaw;
       if (err_att_yaw > 180.0f)  err_att_yaw -= 360.0f;
@@ -355,10 +357,6 @@ void loop()
         desired_pitch - cur_att_Euler.pitch,
         err_att_yaw
       };
-      // Serial.print((cur_att_Euler.yaw-60)/180);
-      // Serial.print(",");
-      // Serial.println(cur_att_Euler.pitch/90);
-      
       
       float pitch_error = PITCH_ERROR_SIGN * err_att.y;
       float pitch_rate = PITCH_RATE_SIGN * gyro_y;
@@ -393,41 +391,12 @@ void loop()
       servoPitch.write(pitchMotorAngle);
       servoYaw.write(yaw_output_state);
     }
-  }
-  // disable stabilization
-  else
-  {
-    /*
-      enter secondary loop, no stabilization.
-
-      need to continuously measure states.
-      newly-measured states will act as our desired angles when reentering stabilization.
-    */
-    if (IMU.hasReset())
+    // disable stabilization
+    else
     {
-      Serial.println("IMU reset!");
-      delay(100);
-    }
-    if (IMU.dataAvailable())
-    {
-      q_current.w = IMU.getQuatReal();
-      q_current.x = IMU.getQuatI();
-      q_current.y = IMU.getQuatJ();
-      q_current.z = IMU.getQuatK();
-
-      normalizeQuat(&q_current);
-
-      // get current attitude from quaternions
-      DCM cur_att = quatToDCM(q_current);
-      EulerDeg cur_att_Euler = dcmToEulerDeg(cur_att);
-
+      // unstabilized loop, but set desired pitch/yaw angles to "remember" when restabilizing
       desired_pitch = cur_att_Euler.pitch;
       desired_yaw = cur_att_Euler.yaw;
-
-      // Serial.print((cur_att_Euler.yaw-60)/180);
-      // Serial.print(",");
-      // Serial.println(cur_att_Euler.pitch/90);
     }
-
   }
 }
