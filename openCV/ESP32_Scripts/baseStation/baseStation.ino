@@ -10,7 +10,7 @@ uint8_t receiverMACAddress[] = {0x4C, 0x11, 0xAE, 0x7E, 0xDC, 0x84};
 struct ControlPacket {
   int16_t x;
   int16_t y;
-  uint8_t btn;
+  uint8_t stab;
   uint8_t mode;
 };
 ControlPacket pkt;
@@ -19,6 +19,7 @@ ControlPacket pkt;
 const int pinXaxis = 34;
 const int pinYaxis = 35;
 const int pinButtn = 32;
+const int pinLED = 4;
 
 // joystick centering constants
 int xCenter;
@@ -34,9 +35,12 @@ int mode = 0;
 // ================================================
 void setup() {
   Serial.begin(115200);
-  WiFi.mode(WIFI_MODE_STA);
+  // initialize pins
+  pinMode(pinLED, INPUT_PULLUP);
   
   // initialize esp-now protocol
+  WiFi.mode(WIFI_MODE_STA);
+
   if (esp_now_init() != ESP_OK)
   {
     Serial.println("Error initializing ESP-NOW protocol");
@@ -86,6 +90,9 @@ void setup() {
 //                     MAIN LOOP
 // ================================================
 void loop() {
+  // read LED button
+  int LED = !digitalRead(pinLED);
+
   // read computer inputs
   if (Serial.available()) {
     String msg = Serial.readStringUntil('\n');
@@ -93,20 +100,22 @@ void loop() {
     // Serial.printf("Error x-axis: %d, Error y-axis: %d\n | Mode is: %d", ex, ey, mode); // debug
   }
   pkt.mode = mode;
-
-  // joystick control loop
+  
   if (mode == 0){
-    // read joystick
+    // joystick control loop
     pkt = getControl(pinXaxis, pinYaxis, xCenter, yCenter);
-
-    // send data
-    esp_now_send(receiverMACAddress, (uint8_t *) &pkt, sizeof(pkt));
   }
-  // openCV control loop
   else {
+    // openCV control loop
     pkt.x = ex;
     pkt.y = ey;
-    pkt.btn = 1;
+  }
+
+  // send data
+  esp_now_send(receiverMACAddress, (uint8_t *) &pkt, sizeof(pkt));
+
+  if (LED == 1) {
+    Serial.println(LED);
   }
 
   delay(30);
@@ -131,8 +140,8 @@ ControlPacket getControl(int pinX, int pinY, int xCenter, int yCenter) {
   pkt.x = x;
   pkt.y = y;
 
-  int btn = digitalRead(pinButtn);
-  if (btn == HIGH) pkt.btn = 0; else pkt.btn = 1;
+  int stab = digitalRead(pinButtn);
+  if (stab == HIGH) pkt.stab = 0; else pkt.stab = 1;
   
   return pkt;
 }
