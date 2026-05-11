@@ -1,6 +1,2 @@
-# BMO08x-esp32
-
-### Wiring
-- Pitch --> pin 19
-- Yaw --> pin 18
-- I2C: SCL --> pin21, SDA --> pin22
+# AME 504 Application Design Project: "Second Buddy" Helmet
+Gyroscopically stabilized helmet-mounted camera wireless joystick control and OpenCV-based person tracking.
